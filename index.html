@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Walid Voyages — Suivi accompagnateurs</title>
+<link rel="preconnect" href="https://unpkg.com">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><div class="mark">WV</div><div>Walid Voyages<small>Suivi des accompagnateurs</small></div></div>
+  <div class="stats"><div class="stat">Appareils: <b id="countAll">0</b></div><div class="stat">Actifs: <b id="countLive">0</b></div></div>
+</header>
+<main class="page">
+  <div class="grid">
+    <aside class="panel">
+      <div class="sectionTitle">Ajouter un appareil</div>
+      <div class="addbox">
+        <input id="deviceName" class="input" placeholder="Ex. Mourafe9 Ahmed" />
+        <div style="height:8px"></div>
+        <div class="row">
+          <button id="addDevice" class="btn btnPrimary" style="flex:1">+ Ajouter</button>
+        </div>
+        <div id="newLink" class="linkbox" style="display:none"></div>
+      </div>
+      <div class="sectionTitle">Appareils</div>
+      <div id="deviceList" class="deviceList"></div>
+    </aside>
+
+    <section class="mapCard">
+      <div class="mapHead">
+        <div><h2 id="selectedTitle">Carte en direct</h2><p id="selectedSub">Positions partagées avec autorisation</p></div>
+        <button id="fitBtn" class="btn btnGhost">Voir tout</button>
+      </div>
+      <div id="map"></div>
+    </section>
+  </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="config.js"></script>
+<script>
+const cfg = window.WV_FIREBASE_CONFIG;
+const configured = cfg && !String(cfg.apiKey).includes('PASTE_');
+let db=null;
+if(configured){firebase.initializeApp(cfg);db=firebase.database();}
+
+const map=L.map('map').setView([34.5,10.2],6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
+const markers=new Map();
+let devices={}; let selected=null;
+
+function uid(){return 'WV-'+Math.random().toString(36).slice(2,7).toUpperCase()+'-'+Date.now().toString().slice(-4)}
+function esc(s){return String(s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}
+function age(ts){if(!ts)return {txt:'Jamais',cls:'offline'};const sec=Math.max(0,(Date.now()-ts)/1000);if(sec<120)return {txt:'En ligne',cls:'online'};if(sec<900)return {txt:Math.round(sec/60)+' min',cls:'stale'};return {txt:'Hors ligne',cls:'offline'}}
+function trackerUrl(id){return location.href.replace(/index\.html?$/,'').replace(/\/$/,'')+'/tracker.html?id='+encodeURIComponent(id)}
+
+function render(){
+  const list=document.getElementById('deviceList'); list.innerHTML='';
+  const arr=Object.values(devices).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  let live=0;
+  arr.forEach(d=>{
+    const a=age(d.updatedAt); if(a.cls==='online')live++;
+    const el=document.createElement('div');el.className='device'+(selected===d.id?' active':'');
+    el.innerHTML=`<div class="dTop"><div><div class="dName">${esc(d.name||d.id)}</div><div class="meta"><span class="code">${esc(d.id)}</span></div></div><span class="pill ${a.cls}">${a.txt}</span></div><div class="meta">${d.lat?`${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}`:'Pas encore de position'}${d.accuracy?` · ±${Math.round(d.accuracy)}m`:''}</div>`;
+    el.onclick=()=>selectDevice(d.id); list.appendChild(el);
+    if(d.lat && d.lng){
+      if(!markers.has(d.id)){const m=L.marker([d.lat,d.lng]).addTo(map);markers.set(d.id,m);} 
+      const m=markers.get(d.id);m.setLatLng([d.lat,d.lng]);m.bindPopup(`<b>${esc(d.name||d.id)}</b><br>${new Date(d.updatedAt||Date.now()).toLocaleString()}`);
+    }
+  });
+  document.getElementById('countAll').textContent=arr.length;
+  document.getElementById('countLive').textContent=live;
+}
+function selectDevice(id){selected=id;const d=devices[id];render();if(d?.lat){map.setView([d.lat,d.lng],15);markers.get(id)?.openPopup();document.getElementById('selectedTitle').textContent=d.name||d.id;document.getElementById('selectedSub').textContent='Dernière mise à jour: '+new Date(d.updatedAt).toLocaleString();}}
+function fitAll(){const pts=Object.values(devices).filter(d=>d.lat&&d.lng).map(d=>[d.lat,d.lng]);if(pts.length===1)map.setView(pts[0],14);else if(pts.length>1)map.fitBounds(pts,{padding:[40,40]});}
+
+document.getElementById('fitBtn').onclick=fitAll;
+document.getElementById('addDevice').onclick=async()=>{
+  const name=document.getElementById('deviceName').value.trim()||'Nouvel accompagnateur';const id=uid();
+  if(db){await db.ref('devices/'+id).set({id,name,createdAt:Date.now(),updatedAt:0,active:false});}
+  else {devices[id]={id,name,createdAt:Date.now(),updatedAt:0,active:false};localStorage.setItem('wv-devices',JSON.stringify(devices));render();}
+  document.getElementById('deviceName').value='';
+  const link=trackerUrl(id);const box=document.getElementById('newLink');box.style.display='block';box.innerHTML=`<b>Lien appareil:</b><br>${esc(link)}<br><br>Ouvrez ce lien sur le téléphone à suivre.`;
+};
+
+if(db){
+  db.ref('devices').on('value',snap=>{devices=snap.val()||{};render();});
+}else{
+  devices=JSON.parse(localStorage.getItem('wv-devices')||'{}');render();
+  document.getElementById('selectedSub').textContent='MODE DÉMO: ajoutez Firebase pour relier plusieurs téléphones.';
+}
+setInterval(render,30000);
+</script>
+</body>
+</html>

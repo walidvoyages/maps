@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Walid Voyages — Partage de position</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="mobileWrap">
+  <div class="mobileCard">
+    <div class="hero"><div class="mark">WV</div><h1>Partage de position</h1><p>Walid Voyages — suivi des accompagnateurs</p></div>
+    <div class="consent">Cette page partage la position GPS de ce téléphone uniquement après votre autorisation. Vous pouvez arrêter le partage à tout moment.</div>
+    <div style="height:14px"></div>
+    <input id="name" class="input" placeholder="Nom de l'accompagnateur" />
+    <div class="kv">
+      <div class="box"><span>Appareil</span><b id="deviceId">—</b></div>
+      <div class="box"><span>État</span><b id="state">Non démarré</b></div>
+      <div class="box"><span>Précision</span><b id="accuracy">—</b></div>
+      <div class="box"><span>Dernier envoi</span><b id="last">—</b></div>
+    </div>
+    <button id="start" class="bigBtn start">Autoriser et démarrer le GPS</button>
+    <button id="stop" class="bigBtn stop" disabled>Arrêter le partage</button>
+    <div id="status" class="status">Le GPS n'est pas encore actif.</div>
+    <div class="tiny">Pour un suivi continu, laissez les services de localisation actifs et autorisez la localisation précise.</div>
+  </div>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="config.js"></script>
+<script>
+const cfg=window.WV_FIREBASE_CONFIG;const configured=cfg&&!String(cfg.apiKey).includes('PASTE_');let db=null;if(configured){firebase.initializeApp(cfg);db=firebase.database();}
+const params=new URLSearchParams(location.search);const id=params.get('id')||('WV-'+Math.random().toString(36).slice(2,7).toUpperCase());
+document.getElementById('deviceId').textContent=id;let watchId=null;
+const nameEl=document.getElementById('name');
+if(db){db.ref('devices/'+id).once('value').then(s=>{const v=s.val();if(v?.name)nameEl.value=v.name;});}
+function setStatus(t){document.getElementById('status').textContent=t}
+async function sendPosition(p){const payload={id,name:nameEl.value.trim()||'Accompagnateur',lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy,speed:p.coords.speed||0,heading:p.coords.heading||0,updatedAt:Date.now(),active:true};
+  if(db){await db.ref('devices/'+id).update(payload); const h=db.ref('history/'+id).push(); await h.set(payload);} 
+  document.getElementById('accuracy').textContent='±'+Math.round(p.coords.accuracy)+' m';document.getElementById('last').textContent=new Date().toLocaleTimeString();document.getElementById('state').textContent='En direct';setStatus('Position envoyée au tableau de bord.');
+}
+function err(e){document.getElementById('state').textContent='Erreur';setStatus('Impossible d’accéder au GPS: '+e.message);}
+document.getElementById('start').onclick=()=>{
+ if(!configured){setStatus('Configurez Firebase dans config.js pour relier ce téléphone au dashboard.');return;}
+ if(!navigator.geolocation){setStatus('Géolocalisation non prise en charge.');return;}
+ watchId=navigator.geolocation.watchPosition(sendPosition,err,{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+ document.getElementById('start').disabled=true;document.getElementById('stop').disabled=false;document.getElementById('state').textContent='GPS actif';setStatus('Demande d’autorisation GPS…');
+};
+document.getElementById('stop').onclick=async()=>{
+ if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
+ if(db)await db.ref('devices/'+id).update({active:false,updatedAt:Date.now()});
+ document.getElementById('start').disabled=false;document.getElementById('stop').disabled=true;document.getElementById('state').textContent='Arrêté';setStatus('Partage de position arrêté.');
+};
+</script>
+</body>
+</html>
